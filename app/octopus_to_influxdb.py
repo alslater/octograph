@@ -67,13 +67,13 @@ def store_series(connection, series, metrics, rate_data):
             # end time is the following day
             low_end_d1 = maya.when(
                 measurement_at.datetime(to_timezone=low_zone).strftime(
-                    f'%Y-%m-%dT23:59:59'
+                    '%Y-%m-%dT23:59:59'
                 ),
                 timezone=low_zone
             )
             low_start_d2 = maya.when(
                 measurement_at.datetime(to_timezone=low_zone).strftime(
-                    f'%Y-%m-%dT00:00:00'
+                    '%Y-%m-%dT00:00:00'
                 ),
                 timezone=low_zone
             )
@@ -172,8 +172,6 @@ def cmd(config_file, from_date, to_date):
     g_meter_type = config.get('gas', 'meter_type', fallback=1)
     g_vcf = config.get('gas', 'volume_correction_factor', fallback=1.02264)
     g_cv = config.get('gas', 'calorific_value', fallback=40)
-    if not g_mpan or not g_serial:
-        raise click.ClickException('No gas meter identifiers')
     g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
             f'{g_mpan}/meters/{g_serial}/consumption/'
 
@@ -233,15 +231,16 @@ def cmd(config_file, from_date, to_date):
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
     store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
 
-    click.echo(
-        f'Retrieving gas data for {from_iso} until {to_iso}...',
-        nl=False
-    )
-    g_consumption = retrieve_paginated_data(
-        api_key, g_url, from_iso, to_iso
-    )
-    click.echo(f' {len(g_consumption)} readings.')
-    store_series(influx, 'gas', g_consumption, rate_data['gas'])
+    if g_mpan and g_serial:
+        click.echo(
+            f'Retrieving gas data for {from_iso} until {to_iso}...',
+            nl=False
+        )
+        g_consumption = retrieve_paginated_data(
+            api_key, g_url, from_iso, to_iso
+        )
+        click.echo(f' {len(g_consumption)} readings.')
+        store_series(influx, 'gas', g_consumption, rate_data['gas'])
 
 
 if __name__ == '__main__':
