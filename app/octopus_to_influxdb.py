@@ -40,9 +40,7 @@ def store_series(connection, series, metrics, rate_data):
     }
 
     def active_rate_field(measurement):
-        if series == 'gas':
-            return 'unit_rate'
-        elif not rate_data['unit_rate_low_zone']:  # no low rate
+        if not rate_data['unit_rate_low_zone']:  # no low rate
             return 'unit_rate_high'
 
         low_start_str = rate_data['unit_rate_low_start']
@@ -167,14 +165,6 @@ def cmd(config_file, from_date, to_date):
             f'{e_mpan}/meters/{e_serial}/consumption/'
     agile_url = config.get('electricity', 'agile_rate_url', fallback=None)
 
-    g_mpan = config.get('gas', 'mpan', fallback=None)
-    g_serial = config.get('gas', 'serial_number', fallback=None)
-    g_meter_type = config.get('gas', 'meter_type', fallback=1)
-    g_vcf = config.get('gas', 'volume_correction_factor', fallback=1.02264)
-    g_cv = config.get('gas', 'calorific_value', fallback=40)
-    g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
-            f'{g_mpan}/meters/{g_serial}/consumption/'
-
     timezone = config.get('electricity', 'unit_rate_low_zone', fallback=None)
 
     rate_data = {
@@ -199,14 +189,6 @@ def cmd(config_file, from_date, to_date):
                 'electricity', 'agile_standing_charge', fallback=0.0
             ),
             'agile_unit_rates': [],
-        },
-        'gas': {
-            'standing_charge': config.getfloat(
-                'gas', 'standing_charge', fallback=0.0
-            ),
-            'unit_rate': config.getfloat('gas', 'unit_rate', fallback=0.0),
-            # SMETS1 meters report kWh, SMET2 report m^3 and need converting to kWh first
-            'conversion_factor': (float(g_vcf) * float(g_cv)) / 3.6 if int(g_meter_type) > 1 else None,
         }
     }
 
@@ -230,18 +212,6 @@ def cmd(config_file, from_date, to_date):
     )
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
     store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
-
-    if g_mpan and g_serial:
-        click.echo(
-            f'Retrieving gas data for {from_iso} until {to_iso}...',
-            nl=False
-        )
-        g_consumption = retrieve_paginated_data(
-            api_key, g_url, from_iso, to_iso
-        )
-        click.echo(f' {len(g_consumption)} readings.')
-        store_series(influx, 'gas', g_consumption, rate_data['gas'])
-
 
 if __name__ == '__main__':
     cmd()
