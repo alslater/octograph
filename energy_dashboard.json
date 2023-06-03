@@ -486,7 +486,7 @@
               "tooltip": false,
               "viz": false
             },
-            "lineInterpolation": "stepAfter",
+            "lineInterpolation": "stepBefore",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -580,6 +580,7 @@
         "y": 2
       },
       "id": 2,
+      "interval": "$interval",
       "links": [],
       "options": {
         "legend": {
@@ -619,7 +620,7 @@
           "measurement": "electricity",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT mean(\"agile_rate\")/100 FROM \"electricity\" WHERE $timeFilter GROUP BY time(30m) fill(linear)",
+          "query": "SELECT mean(\"agile_rate\")/100 FROM \"electricity\" WHERE $timeFilter GROUP BY time($interval) fill(linear)",
           "rawQuery": true,
           "refId": "B",
           "resultFormat": "time_series",
@@ -663,7 +664,7 @@
           "measurement": "electricity",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT mean(\"agile_cost\")/100 FROM \"electricity\" WHERE $timeFilter GROUP BY time(30m) fill(linear)",
+          "query": "SELECT sum(\"agile_cost\")/100 FROM \"electricity\" WHERE $timeFilter GROUP BY time($interval) fill(linear)",
           "rawQuery": true,
           "refId": "C",
           "resultFormat": "time_series",
@@ -695,7 +696,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic",
+            "mode": "continuous-GrYlRd",
             "seriesBy": "last"
           },
           "custom": {
@@ -706,13 +707,13 @@
             "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 10,
-            "gradientMode": "none",
+            "gradientMode": "scheme",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "lineInterpolation": "stepAfter",
+            "lineInterpolation": "stepBefore",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -730,98 +731,17 @@
           },
           "mappings": [],
           "thresholds": {
-            "mode": "absolute",
+            "mode": "percentage",
             "steps": [
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              },
-              {
-                "color": "#EAB839",
-                "value": 90
               }
             ]
           },
           "unit": "kwatth"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Agile Rate"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Cost"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Agile cost"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Cost"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "__systemRef": "hideSeriesFrom",
-            "matcher": {
-              "id": "byNames",
-              "options": {
-                "mode": "exclude",
-                "names": [
-                  "Usage"
-                ],
-                "prefix": "All except:",
-                "readOnly": true
-              }
-            },
-            "properties": [
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": true
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 13,
@@ -830,10 +750,13 @@
         "y": 15
       },
       "id": 20,
+      "interval": "$interval",
       "links": [],
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+            "lastNotNull"
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -854,7 +777,7 @@
           "groupBy": [
             {
               "params": [
-                "30m"
+                "$__interval"
               ],
               "type": "time"
             },
@@ -882,7 +805,7 @@
               },
               {
                 "params": [],
-                "type": "mean"
+                "type": "sum"
               }
             ]
           ],
@@ -898,11 +821,58 @@
   "style": "dark",
   "tags": [],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "auto": true,
+        "auto_count": 200,
+        "auto_min": "30m",
+        "current": {
+          "selected": true,
+          "text": "30m",
+          "value": "30m"
+        },
+        "description": "Interval",
+        "hide": 0,
+        "label": "Interval",
+        "name": "interval",
+        "options": [
+          {
+            "selected": false,
+            "text": "auto",
+            "value": "$__auto_interval_interval"
+          },
+          {
+            "selected": true,
+            "text": "30m",
+            "value": "30m"
+          },
+          {
+            "selected": false,
+            "text": "1d",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "1w",
+            "value": "1w"
+          },
+          {
+            "selected": false,
+            "text": "1M",
+            "value": "1M"
+          }
+        ],
+        "query": "30m,1d,1w,1M",
+        "queryValue": "",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "interval"
+      }
+    ]
   },
   "time": {
-    "from": "now-8d",
-    "to": "now-1d"
+    "from": "now-2d",
+    "to": "now"
   },
   "timepicker": {
     "refresh_intervals": [
@@ -932,6 +902,6 @@
   "timezone": "",
   "title": "Energy usage",
   "uid": "7Nqpoj-ik",
-  "version": 5,
+  "version": 17,
   "weekStart": ""
 }
