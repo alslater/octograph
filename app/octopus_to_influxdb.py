@@ -40,55 +40,10 @@ def store_series(connection, series, metrics, rate_data):
     }
 
     def active_rate_field(measurement):
-        if not rate_data['unit_rate_low_zone']:  # no low rate
-            return 'unit_rate_high'
-
-        low_start_str = rate_data['unit_rate_low_start']
-        low_end_str = rate_data['unit_rate_low_end']
-        low_zone = rate_data['unit_rate_low_zone']
-
-        measurement_at = maya.parse(measurement['interval_start'])
-
-        low_start = maya.when(
-            measurement_at.datetime(to_timezone=low_zone).strftime(
-                f'%Y-%m-%dT{low_start_str}'
-            ),
-            timezone=low_zone
-        )
-        low_end = maya.when(
-            measurement_at.datetime(to_timezone=low_zone).strftime(
-                f'%Y-%m-%dT{low_end_str}'
-            ),
-            timezone=low_zone
-        )
-        if low_start > low_end:
-            # end time is the following day
-            low_end_d1 = maya.when(
-                measurement_at.datetime(to_timezone=low_zone).strftime(
-                    '%Y-%m-%dT23:59:59'
-                ),
-                timezone=low_zone
-            )
-            low_start_d2 = maya.when(
-                measurement_at.datetime(to_timezone=low_zone).strftime(
-                    '%Y-%m-%dT00:00:00'
-                ),
-                timezone=low_zone
-            )
-            low_period_a = maya.MayaInterval(low_start, low_end_d1)
-            low_period_b = maya.MayaInterval(low_start_d2, low_end)
-        else:
-            low_period_a = low_period_b = maya.MayaInterval(low_start, low_end)
-        return \
-            'unit_rate_low' if measurement_at in low_period_a \
-                or measurement_at in low_period_b \
-            else 'unit_rate_high'
+        return 'unit_rate_high'
 
     def fields_for_measurement(measurement):
         consumption = measurement['consumption']
-        conversion_factor = rate_data.get('conversion_factor', None)
-        if conversion_factor:
-            consumption *= conversion_factor
         rate = active_rate_field(measurement)
         rate_cost = rate_data[rate]
         cost = consumption * rate_cost
@@ -112,6 +67,26 @@ def store_series(connection, series, metrics, rate_data):
             })
         return fields
 
+    def new_agile_rates(agile_rates):
+        rates = []
+        for date, rate in agile_rates.items():
+            fields = {
+                'consumption': 0.0,
+                'cost': 0.0,
+                'total_cost': 0.0,
+            }
+            agile_unit_rate = agile_rates.get(
+                maya.parse(date).iso8601(),
+                0
+            )
+            fields.update({
+                'agile_rate': agile_unit_rate,
+                'agile_cost': 0.0,
+                'agile_total_cost': 0.0,
+            })
+            rates.append({ 'date': date, 'fields': fields })
+        return rates
+
     def tags_for_measurement(measurement):
         period = maya.parse(measurement['interval_end'])
         time = period.datetime().strftime('%H:%M')
@@ -129,6 +104,31 @@ def store_series(connection, series, metrics, rate_data):
         }
         for measurement in metrics
     ]
+
+    import json
+    
+    # print(json.dumps(measurements, indent=2))
+    
+    if agile_data:
+        last_usage_time = measurements[0]['time'] if measurements else maya.now().iso8601()
+        new_agile = {}
+        for k, v in agile_rates.items():
+            if k > last_usage_time:
+                new_agile[k] = v
+        
+        new_agile = new_agile_rates(new_agile)
+        if new_agile:
+            new_measurements = [
+                {
+                    'measurement': series,
+                    'tags': { 'active_rate': 'unit_rate_high', 'time_of_day': f'{maya.parse(i["date"]).datetime().strftime("%H:%M")}' },
+                    'time': i['date'],
+                    'fields': i['fields'],
+                }
+                for i in new_agile
+            ]
+            measurements.extend(new_measurements)
+     
     connection.write_points(measurements)
 
 
@@ -139,7 +139,7 @@ def store_series(connection, series, metrics, rate_data):
     type=click.Path(exists=True, dir_okay=True, readable=True),
 )
 @click.option('--from-date', default='yesterday midnight', type=click.STRING)
-@click.option('--to-date', default='today midnight', type=click.STRING)
+@click.option('--to-date', default='tomorrow 23:59', type=click.STRING)
 def cmd(config_file, from_date, to_date):
 
     config = ConfigParser()
@@ -165,7 +165,7 @@ def cmd(config_file, from_date, to_date):
             f'{e_mpan}/meters/{e_serial}/consumption/'
     agile_url = config.get('electricity', 'agile_rate_url', fallback=None)
 
-    timezone = config.get('electricity', 'unit_rate_low_zone', fallback=None)
+    timezone = config.get('electricity', 'unit_rate_low_zone', fallback='UTC+0')
 
     rate_data = {
         'electricity': {
