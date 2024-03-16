@@ -210,6 +210,7 @@ def cmd(config_file, from_date, to_date):
     rate_data['electricity']['agile_unit_rates'] = retrieve_paginated_data(
         api_key, agile_url, from_iso, to_iso
     )
+    
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
     store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
 
