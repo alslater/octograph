@@ -56,7 +56,7 @@ def store_series(connection, series, metrics, rate_data):
         if agile_data:
             agile_standing_charge = rate_data['agile_standing_charge'] / 48
             agile_unit_rate = agile_rates.get(
-                maya.parse(measurement['interval_end']).iso8601(),
+                maya.parse(measurement['interval_start']).iso8601(),
                 rate_data[rate]  # cludge, use Go rate during DST changeover
             )
             agile_cost = agile_unit_rate * consumption
@@ -88,7 +88,7 @@ def store_series(connection, series, metrics, rate_data):
         return rates
 
     def tags_for_measurement(measurement):
-        period = maya.parse(measurement['interval_end'])
+        period = maya.parse(measurement['interval_start'])
         time = period.datetime().strftime('%H:%M')
         return {
             'active_rate': active_rate_field(measurement),
@@ -99,23 +99,23 @@ def store_series(connection, series, metrics, rate_data):
         {
             'measurement': series,
             'tags': tags_for_measurement(measurement),
-            'time': measurement['interval_end'],
+            'time': measurement['interval_start'],
             'fields': fields_for_measurement(measurement),
         }
         for measurement in metrics
     ]
 
     import json
-    
+
     # print(json.dumps(measurements, indent=2))
-    
+
     if agile_data:
         last_usage_time = measurements[0]['time'] if measurements else maya.now().iso8601()
         new_agile = {}
         for k, v in agile_rates.items():
             if k > last_usage_time:
                 new_agile[k] = v
-        
+
         new_agile = new_agile_rates(new_agile)
         if new_agile:
             new_measurements = [
@@ -128,7 +128,7 @@ def store_series(connection, series, metrics, rate_data):
                 for i in new_agile
             ]
             measurements.extend(new_measurements)
-     
+
     connection.write_points(measurements)
 
 
@@ -210,7 +210,7 @@ def cmd(config_file, from_date, to_date):
     rate_data['electricity']['agile_unit_rates'] = retrieve_paginated_data(
         api_key, agile_url, from_iso, to_iso
     )
-    
+
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
     store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
 
