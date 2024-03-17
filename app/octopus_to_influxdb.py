@@ -35,7 +35,7 @@ def store_series(connection, series, metrics, rate_data):
 
     agile_data = rate_data.get('agile_unit_rates', [])
     agile_rates = {
-        point['valid_to']: point['value_inc_vat']
+        point['valid_from']: point['value_inc_vat']
         for point in agile_data
     }
 
