@@ -51,7 +51,7 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
 
     def fields_for_measurement(measurement, measurement2):
         consumption = measurement['consumption']
-        export = measurement.get('consumption', 0)
+        export = measurement2.get('consumption', 0)
         rate = active_rate_field(measurement)
         rate_cost = rate_data[rate]
         cost = consumption * rate_cost
