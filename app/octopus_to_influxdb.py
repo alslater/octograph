@@ -7,6 +7,8 @@ import click
 import maya
 import requests
 from influxdb import InfluxDBClient
+import json
+
 
 
 def retrieve_paginated_data(
@@ -31,25 +33,32 @@ def retrieve_paginated_data(
     return results
 
 
-def store_series(connection, series, metrics, rate_data):
-
+def store_series(connection, series, c_metrics, e_metrics, rate_data):
     agile_data = rate_data.get('agile_unit_rates', [])
     agile_rates = {
         point['valid_from']: point['value_inc_vat']
         for point in agile_data
     }
 
+    export_data = rate_data.get('export_unit_rates', [])
+    export_rates = {
+        point['valid_from']: point['value_inc_vat']
+        for point in export_data
+    }
+
     def active_rate_field(measurement):
         return 'unit_rate_high'
 
-    def fields_for_measurement(measurement):
+    def fields_for_measurement(measurement, measurement2):
         consumption = measurement['consumption']
+        export = measurement.get('consumption', 0)
         rate = active_rate_field(measurement)
         rate_cost = rate_data[rate]
         cost = consumption * rate_cost
         standing_charge = rate_data['standing_charge'] / 48  # 30 minute reads
         fields = {
             'consumption': consumption,
+            'export': export,
             'cost': cost,
             'total_cost': cost + standing_charge,
         }
@@ -65,9 +74,19 @@ def store_series(connection, series, metrics, rate_data):
                 'agile_cost': agile_cost,
                 'agile_total_cost': agile_cost + agile_standing_charge,
             })
+        if export_data:
+            export_unit_rate = export_rates.get(
+                maya.parse(measurement['interval_start']).iso8601(),
+                0.0
+            )
+            export_payment = export_unit_rate * export
+            fields.update({
+                'export_rate': export_unit_rate,
+                'export_payment': export_payment,
+            })
         return fields
 
-    def new_agile_rates(agile_rates):
+    def new_agile_rates(agile_rates, export_rates):
         rates = []
         for date, rate in agile_rates.items():
             fields = {
@@ -79,10 +98,16 @@ def store_series(connection, series, metrics, rate_data):
                 maya.parse(date).iso8601(),
                 0
             )
+            export_unit_rate = export_rates.get(
+                maya.parse(date).iso8601(),
+                0
+            )
             fields.update({
                 'agile_rate': agile_unit_rate,
                 'agile_cost': 0.0,
                 'agile_total_cost': 0.0,
+                'export_rate': export_unit_rate,
+                'export_payment': 0.0,
             })
             rates.append({ 'date': date, 'fields': fields })
         return rates
@@ -95,19 +120,29 @@ def store_series(connection, series, metrics, rate_data):
             'time_of_day': time,
         }
 
-    measurements = [
-        {
+    measurements = []
+
+    for index in range(len(c_metrics)):
+        c_measurement = c_metrics[index]
+
+        # We may not have the same start day for consumption and export,
+        # hopefully we don't manage to get data for one and not the other
+        # for any day other than the first.
+        offset = len(c_metrics) - len(e_metrics)
+
+        if offset == 0:
+            e_measurement = e_metrics[index]
+        elif index - offset >= 0:
+            e_measurement = e_metrics[index - offset]
+        else:
+            e_measurement = {}
+
+        measurements.append({
             'measurement': series,
-            'tags': tags_for_measurement(measurement),
-            'time': measurement['interval_start'],
-            'fields': fields_for_measurement(measurement),
-        }
-        for measurement in metrics
-    ]
-
-    import json
-
-    # print(json.dumps(measurements, indent=2))
+            'tags': tags_for_measurement(c_measurement),
+            'time': c_measurement['interval_start'],
+            'fields': fields_for_measurement(c_measurement, e_measurement),
+        })
 
     if agile_data:
         last_usage_time = measurements[0]['time'] if measurements else maya.now().iso8601()
@@ -116,7 +151,12 @@ def store_series(connection, series, metrics, rate_data):
             if k > last_usage_time:
                 new_agile[k] = v
 
-        new_agile = new_agile_rates(new_agile)
+        new_export = {}
+        for k, v in export_rates.items():
+            if k > last_usage_time:
+                new_export[k] = v
+
+        new_agile = new_agile_rates(new_agile, new_export)
         if new_agile:
             new_measurements = [
                 {
@@ -129,6 +169,7 @@ def store_series(connection, series, metrics, rate_data):
             ]
             measurements.extend(new_measurements)
 
+#    click.echo(json.dumps(measurements, indent=2))
     connection.write_points(measurements)
 
 
@@ -158,12 +199,19 @@ def cmd(config_file, from_date, to_date):
         raise click.ClickException('No Octopus API key set')
 
     e_mpan = config.get('electricity', 'mpan', fallback=None)
+    e_export_mpan = config.get('electricity', 'export_mpan', fallback=None)
+
     e_serial = config.get('electricity', 'serial_number', fallback=None)
     if not e_mpan or not e_serial:
         raise click.ClickException('No electricity meter identifiers')
-    e_url = 'https://api.octopus.energy/v1/electricity-meter-points/' \
+    consumption_url = 'https://api.octopus.energy/v1/electricity-meter-points/' \
             f'{e_mpan}/meters/{e_serial}/consumption/'
+
+    export_url = 'https://api.octopus.energy/v1/electricity-meter-points/' \
+            f'{e_export_mpan}/meters/{e_serial}/consumption/'
+
     agile_url = config.get('electricity', 'agile_rate_url', fallback=None)
+    agile_export_url = config.get('electricity', 'agile_export_url', fallback=None)
 
     timezone = config.get('electricity', 'unit_rate_low_zone', fallback='UTC+0')
 
@@ -189,6 +237,7 @@ def cmd(config_file, from_date, to_date):
                 'electricity', 'agile_standing_charge', fallback=0.0
             ),
             'agile_unit_rates': [],
+            'export_unit_rates': []
         }
     }
 
@@ -200,9 +249,19 @@ def cmd(config_file, from_date, to_date):
         nl=False
     )
     e_consumption = retrieve_paginated_data(
-        api_key, e_url, from_iso, to_iso
+        api_key, consumption_url, from_iso, to_iso
     )
     click.echo(f' {len(e_consumption)} readings.')
+
+    click.echo(
+        f'Retrieving export data for {from_iso} until {to_iso}...',
+        nl=False
+    )
+    e_export = retrieve_paginated_data(
+        api_key, export_url, from_iso, to_iso
+    )
+    click.echo(f' {len(e_export)} readings.')
+
     click.echo(
         f'Retrieving Agile rates for {from_iso} until {to_iso}...',
         nl=False
@@ -210,9 +269,19 @@ def cmd(config_file, from_date, to_date):
     rate_data['electricity']['agile_unit_rates'] = retrieve_paginated_data(
         api_key, agile_url, from_iso, to_iso
     )
-
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
-    store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
+
+    click.echo(
+        f'Retrieving Agile export rates for {from_iso} until {to_iso}...',
+        nl=False
+    )
+    rate_data['electricity']['export_unit_rates'] = retrieve_paginated_data(
+        api_key, agile_export_url, from_iso, to_iso
+    )
+
+    click.echo(f' {len(rate_data["electricity"]["export_unit_rates"])} rates.')
+
+    store_series(influx, 'electricity', e_consumption, e_export, rate_data['electricity'])
 
 if __name__ == '__main__':
     cmd()
