@@ -46,13 +46,18 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
         for point in export_data
     }
 
-    def active_rate_field(measurement):
+    def active_rate_field():
         return 'unit_rate_high'
 
     def fields_for_measurement(measurement, measurement2):
-        consumption = measurement['consumption']
-        export = measurement2.get('consumption', 0)
-        rate = active_rate_field(measurement)
+        if iso := measurement.get('interval_start'):
+            interval_start = iso
+        else:
+            interval_start = measurement2.get('interval_start')
+
+        consumption = measurement.get('consumption', 0.0)
+        export = measurement2.get('consumption', 0.0)
+        rate = active_rate_field()
         rate_cost = rate_data[rate]
         cost = consumption * rate_cost
         standing_charge = rate_data['standing_charge'] / 48  # 30 minute reads
@@ -65,7 +70,7 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
         if agile_data:
             agile_standing_charge = rate_data['agile_standing_charge'] / 48
             agile_unit_rate = agile_rates.get(
-                maya.parse(measurement['interval_start']).iso8601(),
+                maya.parse(interval_start).iso8601(),
                 rate_data[rate]  # cludge, use Go rate during DST changeover
             )
             agile_cost = agile_unit_rate * consumption
@@ -76,7 +81,7 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
             })
         if export_data:
             export_unit_rate = export_rates.get(
-                maya.parse(measurement['interval_start']).iso8601(),
+                maya.parse(interval_start).iso8601(),
                 0.0
             )
             export_payment = export_unit_rate * export
@@ -84,6 +89,9 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
                 'export_rate': export_unit_rate,
                 'export_payment': export_payment,
             })
+            if agile_data:
+                fields['agile_total_cost'] -= export_payment
+
         return fields
 
     def new_agile_rates(agile_rates, export_rates):
@@ -91,16 +99,17 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
         for date, rate in agile_rates.items():
             fields = {
                 'consumption': 0.0,
+                'export': 0.0,
                 'cost': 0.0,
                 'total_cost': 0.0,
             }
             agile_unit_rate = agile_rates.get(
                 maya.parse(date).iso8601(),
-                0
+                0.0
             )
             export_unit_rate = export_rates.get(
                 maya.parse(date).iso8601(),
-                0
+                0.0
             )
             fields.update({
                 'agile_rate': agile_unit_rate,
@@ -112,37 +121,38 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
             rates.append({ 'date': date, 'fields': fields })
         return rates
 
-    def tags_for_measurement(measurement):
-        period = maya.parse(measurement['interval_start'])
+    def tags_for_measurement(interval):
+        period = maya.parse(interval)
         time = period.datetime().strftime('%H:%M')
         return {
-            'active_rate': active_rate_field(measurement),
+            'active_rate': active_rate_field(),
             'time_of_day': time,
         }
 
+    # Reorganise metrics from lists to arrays keyed by "interval_start"
+    c_metrics2 = dict()
+    for x in c_metrics:
+        c_metrics2[x["interval_start"]] = x
+
+    e_metrics2 = dict()
+    for x in e_metrics:
+        e_metrics2[x["interval_start"]] = x
+
+    # Combine consumption and export interval keys
+    intervals = sorted(list(c_metrics2.keys()) + list(e_metrics2.keys()), reverse=True)
+
+    # Now process by interval keys
     measurements = []
-
-    for index in range(len(c_metrics)):
-        c_measurement = c_metrics[index]
-
-        # We may not have the same start day for consumption and export,
-        # hopefully we don't manage to get data for one and not the other
-        # for any day other than the first.
-        offset = len(c_metrics) - len(e_metrics)
-
-        if offset == 0:
-            e_measurement = e_metrics[index]
-        elif index - offset >= 0:
-            e_measurement = e_metrics[index - offset]
-        else:
-            e_measurement = {}
+    for interval in intervals:
+        c = c_metrics2.get(interval, {})
+        e = e_metrics2.get(interval, {})
 
         measurements.append({
-            'measurement': series,
-            'tags': tags_for_measurement(c_measurement),
-            'time': c_measurement['interval_start'],
-            'fields': fields_for_measurement(c_measurement, e_measurement),
-        })
+                'measurement': series,
+                'tags': tags_for_measurement(interval),
+                'time': interval,
+                'fields': fields_for_measurement(c, e),
+            })
 
     if agile_data:
         last_usage_time = measurements[0]['time'] if measurements else maya.now().iso8601()
@@ -169,7 +179,7 @@ def store_series(connection, series, c_metrics, e_metrics, rate_data):
             ]
             measurements.extend(new_measurements)
 
-#    click.echo(json.dumps(measurements, indent=2))
+    # click.echo(json.dumps(measurements, indent=2))
     connection.write_points(measurements)
 
 
